@@ -114,19 +114,19 @@ const updateSecuritySchema = z.object({
 router.get('/:profileId/security', requirePermission('PROFILE_READ'), async (req: AuthRequest, res: Response) => {
   try {
     const profile = await prisma.profile.findFirst({
-      where: { id: req.params.profileId, tenantId: req.tenantId! },
-      select: { id: true, name: true, description: true, isAdmin: true, leadStatusAccess: true },
+      where: { id: req.params.profileId, ...(req.user!.isSuperAdmin ? {} : { tenantId: req.tenantId! }) },
+      select: { id: true, name: true, description: true, isAdmin: true, leadStatusAccess: true, tenantId: true },
     });
     if (!profile) return res.status(404).json({ success: false, error: 'Profile not found' });
 
     const [objects, objectPermissions, fieldPermissions, permissions] = await Promise.all([
       prisma.objectDefinition.findMany({
-        where: { tenantId: req.tenantId!, isActive: true },
+        where: { tenantId: profile.tenantId, isActive: true },
         select: { id: true, name: true, label: true, fields: { where: { isActive: true }, select: { id: true, name: true, label: true, fieldType: true }, orderBy: { displayOrder: 'asc' } } },
         orderBy: { label: 'asc' },
       }),
-      prisma.profileObjectPermission.findMany({ where: { profileId: req.params.profileId, tenantId: req.tenantId! } }),
-      prisma.profileFieldPermission.findMany({ where: { profileId: req.params.profileId, tenantId: req.tenantId! } }),
+      prisma.profileObjectPermission.findMany({ where: { profileId: req.params.profileId, tenantId: profile.tenantId } }),
+      prisma.profileFieldPermission.findMany({ where: { profileId: req.params.profileId, tenantId: profile.tenantId } }),
       prisma.userProfilePermission.findMany({ where: { profileId: req.params.profileId, permission: { isActive: true } }, include: { permission: true } }),
     ]);
 
@@ -152,18 +152,22 @@ router.get('/:profileId/security', requirePermission('PROFILE_READ'), async (req
 router.put('/:profileId/security', requirePermission('PROFILE_PERMISSION_MANAGE'), async (req: AuthRequest, res: Response) => {
   try {
     const data = updateSecuritySchema.parse(req.body);
-    const profile = await prisma.profile.findFirst({ where: { id: req.params.profileId, tenantId: req.tenantId! }, select: { id: true, leadStatusAccess: true } });
+    const profile = await prisma.profile.findFirst({
+      where: { id: req.params.profileId, ...(req.user!.isSuperAdmin ? {} : { tenantId: req.tenantId! }) },
+      select: { id: true, leadStatusAccess: true, tenantId: true },
+    });
     if (!profile) return res.status(404).json({ success: false, error: 'Profile not found' });
+    const tenantId = profile.tenantId;
 
     if (data.objectPermissions?.length) {
       const objectIds = [...new Set(data.objectPermissions.map((item) => item.objectId))];
-      const objectCount = await prisma.objectDefinition.count({ where: { id: { in: objectIds }, tenantId: req.tenantId!, isActive: true } });
+      const objectCount = await prisma.objectDefinition.count({ where: { id: { in: objectIds }, tenantId, isActive: true } });
       if (objectCount !== objectIds.length) return res.status(400).json({ success: false, error: 'One or more objects were not found in this tenant' });
     }
 
     if (data.fieldPermissions?.length) {
       const fieldIds = [...new Set(data.fieldPermissions.map((item) => item.fieldId))];
-      const fieldCount = await prisma.fieldDefinition.count({ where: { id: { in: fieldIds }, tenantId: req.tenantId!, isActive: true } });
+      const fieldCount = await prisma.fieldDefinition.count({ where: { id: { in: fieldIds }, tenantId, isActive: true } });
       if (fieldCount !== fieldIds.length) return res.status(400).json({ success: false, error: 'One or more fields were not found in this tenant' });
     }
 
@@ -176,7 +180,7 @@ router.put('/:profileId/security', requirePermission('PROFILE_PERMISSION_MANAGE'
     const objectNameMap = data.objectPermissions?.length
       ? Object.fromEntries(
           (await prisma.objectDefinition.findMany({
-            where: { id: { in: [...new Set(data.objectPermissions.map((item) => item.objectId))] }, tenantId: req.tenantId!, isActive: true },
+            where: { id: { in: [...new Set(data.objectPermissions.map((item) => item.objectId))] }, tenantId, isActive: true },
             select: { id: true, name: true },
           })).map((objectDefinition) => [objectDefinition.id, objectDefinition.name]),
         )
@@ -204,11 +208,11 @@ router.put('/:profileId/security', requirePermission('PROFILE_PERMISSION_MANAGE'
     await prisma.$transaction(async (tx) => {
       if (data.objectPermissions) {
         await tx.profileObjectPermission.deleteMany({ where: { profileId: profile.id } });
-        if (normalizedObjectPermissions.length) await tx.profileObjectPermission.createMany({ data: normalizedObjectPermissions.map((item) => ({ ...item, profileId: profile.id, tenantId: req.tenantId! })) });
+        if (normalizedObjectPermissions.length) await tx.profileObjectPermission.createMany({ data: normalizedObjectPermissions.map((item) => ({ ...item, profileId: profile.id, tenantId })) });
       }
       if (data.fieldPermissions) {
         await tx.profileFieldPermission.deleteMany({ where: { profileId: profile.id } });
-        if (data.fieldPermissions.length) await tx.profileFieldPermission.createMany({ data: data.fieldPermissions.map((item) => ({ ...item, profileId: profile.id, tenantId: req.tenantId! })) });
+        if (data.fieldPermissions.length) await tx.profileFieldPermission.createMany({ data: data.fieldPermissions.map((item) => ({ ...item, profileId: profile.id, tenantId })) });
       }
       if (data.permissionIds) {
         await tx.userProfilePermission.deleteMany({ where: { profileId: profile.id } });

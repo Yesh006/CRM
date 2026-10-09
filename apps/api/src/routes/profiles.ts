@@ -21,6 +21,10 @@ const profileSchema = z.object({
   leadStatusAccess: leadStatusAccessSchema,
 });
 
+const createProfileSchema = profileSchema.extend({
+  tenantId: z.string().optional(),
+});
+
 const updateProfileSchema = profileSchema.partial();
 
 router.get('/', requirePermission('PROFILE_READ'), async (req: AuthRequest, res: Response) => {
@@ -28,7 +32,10 @@ router.get('/', requirePermission('PROFILE_READ'), async (req: AuthRequest, res:
     const { page = 1, limit = 20, search, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
     const skip = (Number(page) - 1) * Number(limit);
 
-    const where: any = { tenantId: req.tenantId! };
+    const tenantId = req.user!.isSuperAdmin && typeof req.query.tenantId === 'string'
+      ? req.query.tenantId
+      : req.tenantId!;
+    const where: any = { tenantId };
     if (search) {
       where.OR = [
         { name: { contains: search as string, mode: 'insensitive' } },
@@ -92,14 +99,25 @@ router.get('/:id', requirePermission('PROFILE_READ'), async (req: AuthRequest, r
 
 router.post('/', requirePermission('PROFILE_CREATE'), async (req: AuthRequest, res: Response) => {
   try {
-    const data = profileSchema.parse(req.body);
+    const data = createProfileSchema.parse(req.body);
+    const tenantId = req.user!.isSuperAdmin && data.tenantId
+      ? data.tenantId
+      : req.tenantId!;
 
     if (data.isAdmin !== undefined && !req.user!.isSuperAdmin) {
       return res.status(403).json({ success: false, error: 'Only Super Admin can change administrator status' });
     }
 
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true },
+    });
+    if (!tenant) {
+      return res.status(404).json({ success: false, error: 'Company not found' });
+    }
+
     const existingProfile = await prisma.profile.findFirst({
-      where: { tenantId: req.tenantId!, name: data.name },
+      where: { tenantId, name: data.name },
     });
 
     if (existingProfile) {
@@ -108,7 +126,7 @@ router.post('/', requirePermission('PROFILE_CREATE'), async (req: AuthRequest, r
 
     const profile = await prisma.profile.create({
       data: {
-        tenantId: req.tenantId!,
+        tenantId,
         name: data.name,
         description: data.description,
         isDefault: data.isDefault ?? false,
@@ -119,7 +137,7 @@ router.post('/', requirePermission('PROFILE_CREATE'), async (req: AuthRequest, r
 
     await prisma.auditLog.create({
       data: {
-        tenantId: req.tenantId!,
+        tenantId,
         userId: req.user!.id,
         action: 'CREATE',
         objectType: 'Profile',

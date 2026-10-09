@@ -2,36 +2,27 @@ import React from 'react';
 import { fireEvent, render, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const routeState = vi.hoisted(() => ({ value: '/home' }));
-const searchState = vi.hoisted(() => ({ value: '' }));
-
-const homepageApiMock = vi.hoisted(() => ({
-  list: vi.fn().mockResolvedValue({
-    data: [{ id: 'homepage-1', name: 'Executive Dashboard' }],
-  }),
-}));
+const authState = vi.hoisted(() => ({ isAdmin: true, isSuperAdmin: false }));
+const profileState = vi.hoisted(() => ({ profiles: [] as Array<{ id: string; name: string }> }));
+const routerState = vi.hoisted(() => ({ push: vi.fn() }));
 
 const profileApiMock = vi.hoisted(() => ({
-  list: vi.fn().mockResolvedValue({ data: [] }),
+  list: vi.fn().mockImplementation(() => Promise.resolve({ data: { data: profileState.profiles } })),
 }));
 
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn() }),
-  usePathname: () => routeState.value,
-  useSearchParams: () => new URLSearchParams(searchState.value),
-}));
+vi.mock('next/navigation', () => ({ useRouter: () => routerState }));
 
 vi.mock('@/contexts/auth-context', () => ({
   useAuth: () => ({
     user: { firstName: 'Admin', lastName: 'User' },
     profile: null,
     logout: vi.fn(),
-    isAdmin: true,
+    isAdmin: authState.isAdmin,
+    isSuperAdmin: authState.isSuperAdmin,
   }),
 }));
 
 vi.mock('@/lib/api', () => ({
-  homepageApi: homepageApiMock,
   profileApi: profileApiMock,
 }));
 
@@ -58,45 +49,61 @@ if (!window.HTMLElement.prototype.hasPointerCapture) {
 describe('Header admin home refresh', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    routeState.value = '/home';
-    searchState.value = '';
-    homepageApiMock.list.mockResolvedValue({
-      data: [{ id: 'homepage-1', name: 'Executive Dashboard' }],
-    });
-    profileApiMock.list.mockResolvedValue({ data: [] });
+    authState.isAdmin = true;
+    authState.isSuperAdmin = false;
+    routerState.push.mockClear();
+    profileState.profiles = [{ id: 'profile-1', name: 'Standard User' }];
+    profileApiMock.list.mockImplementation(() => Promise.resolve({ data: { data: profileState.profiles } }));
   });
 
-  it('refreshes the admin homepages list on mount, not on route change, but on dropdown open', async () => {
-    const { rerender, getByRole } = render(<Header onMenuClick={() => undefined} />);
-
+  it('refreshes profiles on every Admin Home dropdown open', async () => {
+    const { getByRole, findByText, getAllByRole, queryByRole, queryByText } = render(<Header onMenuClick={() => undefined} />);
     await waitFor(() => {
-      expect(homepageApiMock.list).toHaveBeenCalledTimes(1);
+      expect(profileApiMock.list).toHaveBeenCalledWith({ limit: 100 });
     });
-
-    routeState.value = '/admin/customize-home';
-    rerender(<Header onMenuClick={() => undefined} />);
-    expect(homepageApiMock.list).toHaveBeenCalledTimes(1);
 
     fireEvent.keyDown(getByRole('button', { name: /Admin Home/i }), { key: 'Enter' });
+    expect(await findByText('Standard User')).toBeTruthy();
+    expect(getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['Standard User']);
 
+    fireEvent.click(getAllByRole('menuitem')[0]);
+    expect(routerState.push).toHaveBeenCalledWith(
+      '/profiles/standard-user?profileId=profile-1&profileLabel=Standard+User',
+    );
+    fireEvent.keyDown(getByRole('button', { name: /Admin Home/i }), { key: 'Escape' });
+    await waitFor(() => expect(queryByRole('menuitem')).toBeNull());
+
+    profileState.profiles = [
+      { id: 'profile-1', name: 'Standard User' },
+      { id: 'profile-2', name: 'Newly Added Profile' },
+    ];
+    fireEvent.keyDown(getByRole('button', { name: /Admin Home/i }), { key: 'Enter' });
+    expect(await findByText('Newly Added Profile')).toBeTruthy();
     await waitFor(() => {
-      expect(homepageApiMock.list).toHaveBeenCalledTimes(2);
+      expect(profileApiMock.list).toHaveBeenCalledTimes(3);
     });
+    expect(getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+      'Newly Added Profile',
+      'Standard User',
+    ]);
+    expect(queryByRole('menuitem', { name: 'Admin Home' })).toBeNull();
+    expect(queryByRole('menuitem', { name: /Dashboard|Executive Dashboard/i })).toBeNull();
   });
 
-  it('shows the selected homepage name and restores Admin Home as the fallback', async () => {
-    searchState.value = 'homepage=homepage-1';
-    const { rerender, getByRole } = render(<Header onMenuClick={() => undefined} />);
+  it('hides the home selector from Super Admins', () => {
+    authState.isAdmin = true;
+    authState.isSuperAdmin = true;
 
-    await waitFor(() => {
-      expect(getByRole('button', { name: /Executive Dashboard/i })).toBeTruthy();
-    });
-
-    searchState.value = '';
-    rerender(<Header onMenuClick={() => undefined} />);
-
-    await waitFor(() => {
-      expect(getByRole('button', { name: /Admin Home/i })).toBeTruthy();
-    });
+    const { queryByRole } = render(<Header onMenuClick={() => undefined} />);
+    expect(queryByRole('button', { name: /Admin Home/i })).toBeNull();
   });
+
+  it('hides the home selector from users who are not Admin', () => {
+    authState.isAdmin = false;
+    authState.isSuperAdmin = false;
+
+    const { queryByRole } = render(<Header onMenuClick={() => undefined} />);
+    expect(queryByRole('button', { name: /Admin Home/i })).toBeNull();
+  });
+
 });

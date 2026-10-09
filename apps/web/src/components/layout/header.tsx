@@ -2,7 +2,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 
 import * as React from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -13,16 +13,13 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Search, Bell, Menu, Settings, LogOut, User, HelpCircle, ChevronDown, Check } from "lucide-react";
+import { Search, Bell, Menu, Settings, LogOut, User, HelpCircle, ChevronDown } from "lucide-react";
 import { SearchDialog } from "@/components/crm/search-dialog";
 import { useAuth } from "@/contexts/auth-context";
-import { homepageApi, profileApi } from "@/lib/api";
+import { profileApi } from "@/lib/api";
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -38,15 +35,13 @@ function slugifyProfileName(name: string) {
 
 export function Header({ onMenuClick }: HeaderProps) {
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const { user, profile, logout, isAdmin, isSuperAdmin } = useAuth();
   const isAuthenticated = Boolean(user);
-  const showHomeSelector = isAuthenticated;
+  const showHomeSelector = isAuthenticated && isAdmin && !isSuperAdmin;
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [adminHomeOpen, setAdminHomeOpen] = React.useState(false);
   const [adminProfiles, setAdminProfiles] = React.useState<{ id: string; name: string }[]>([]);
-  const [adminHomepages, setAdminHomepages] = React.useState<{ id: string; name: string }[]>([]);
+  const profileRefreshId = React.useRef(0);
   const [notifications] = React.useState([
     { id: 1, title: "New lead assigned", time: "5 min ago", read: false },
     { id: 2, title: "Site visit scheduled", time: "1 hour ago", read: false },
@@ -54,28 +49,18 @@ export function Header({ onMenuClick }: HeaderProps) {
   ]);
 
   const refreshAdminDropdownData = React.useCallback(() => {
-    if (!user) {
+    if (!user || !isAdmin || isSuperAdmin) {
+      profileRefreshId.current += 1;
       setAdminProfiles([]);
-      setAdminHomepages([]);
       return;
     }
 
-    let isMounted = true;
-    const profilesRequest = isAdmin ? profileApi.list() : Promise.resolve({ data: [] });
-    const homepagesRequest = isAdmin ? homepageApi.list() : homepageApi.assigned();
-    Promise.all([profilesRequest, homepagesRequest])
-      .then(([profilesResponse, homepagesResponse]) => {
+    const refreshId = ++profileRefreshId.current;
+    profileApi.list({ limit: 100 })
+      .then((profilesResponse) => {
         const profileItems = (Array.isArray(profilesResponse.data)
           ? profilesResponse.data
           : (profilesResponse.data as any)?.data ?? (profilesResponse.data as any)?.profiles ?? []) as Array<{ id?: string; name?: string }>;
-        const homepageResponseData = (homepagesResponse.data as any)?.data;
-        const homepageItems = (Array.isArray(homepagesResponse.data)
-          ? homepagesResponse.data
-          : Array.isArray(homepageResponseData)
-            ? homepageResponseData
-            : homepageResponseData
-              ? [homepageResponseData]
-              : (homepagesResponse.data as any)?.homepages ?? []) as Array<{ id?: string; name?: string }>;
 
         const uniqueProfiles: Array<{ id: string; name: string }> = Array.from(
           new Map(
@@ -84,30 +69,17 @@ export function Header({ onMenuClick }: HeaderProps) {
               .map((item) => [item.id as string, { id: item.id || "", name: item.name as string }])
           ).values()
         ).sort((a, b) => a.name.localeCompare(b.name));
-        const uniqueHomepages: Array<{ id: string; name: string }> = Array.from(
-          new Map(
-            homepageItems
-              .filter((item) => !!item?.name)
-              .map((item) => [item.id as string, { id: item.id || "", name: item.name as string }])
-          ).values()
-        ).sort((a, b) => a.name.localeCompare(b.name));
 
-        if (isMounted) {
+        if (refreshId === profileRefreshId.current) {
           setAdminProfiles(uniqueProfiles);
-          setAdminHomepages(uniqueHomepages);
         }
       })
       .catch(() => {
-        if (isMounted) {
+        if (refreshId === profileRefreshId.current) {
           setAdminProfiles([]);
-          setAdminHomepages([]);
         }
       });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [isAdmin, isAuthenticated]);
+  }, [isAdmin, isAuthenticated, isSuperAdmin]);
 
   React.useEffect(() => {
     refreshAdminDropdownData();
@@ -123,32 +95,17 @@ export function Header({ onMenuClick }: HeaderProps) {
     ? `${user.firstName || ""} ${user.lastName || ""}`.trim() || "User"
     : "User";
 
-  const selectedHomepageId = pathname === "/home"
-    ? searchParams.get("homepage")
-    : null;
-  const selectedHomepage = adminHomepages.find(
-    (homepage) => homepage.id === selectedHomepageId,
-  );
-  const isAdminHomeSelected = pathname === "/home" && !selectedHomepageId;
-  const selectedHomeLabel = selectedHomepage?.name || "Admin Home";
-
   const handleLogout = async () => {
     await logout();
   };
 
-  const handleProfileNavigation = (profileName: string) => {
+  const handleProfileNavigation = (profile: { id: string; name: string }) => {
     setAdminHomeOpen(false);
-    router.push(`/profiles/${slugifyProfileName(profileName)}`);
-  };
-
-  const handleHomepageNavigation = (homepageId: string) => {
-    setAdminHomeOpen(false);
-    router.push(`/home?homepage=${encodeURIComponent(homepageId)}`);
-  };
-
-  const handleAdminHomeNavigation = () => {
-    setAdminHomeOpen(false);
-    router.push("/home");
+    const query = new URLSearchParams({
+      profileId: profile.id,
+      profileLabel: profile.name,
+    });
+    router.push(`/profiles/${slugifyProfileName(profile.name)}?${query}`);
   };
 
   return (
@@ -189,62 +146,20 @@ export function Header({ onMenuClick }: HeaderProps) {
                   variant="ghost"
                   className="h-9 border border-border bg-background px-3 text-sm font-medium text-foreground shadow-sm"
                 >
-                  <span className="max-w-48 truncate">{selectedHomeLabel}</span>
+                  <span className="max-w-48 truncate">Admin Home</span>
                   <ChevronDown className="ml-2 h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuItem
-                  onSelect={handleAdminHomeNavigation}
-                  className={cn(
-                    "font-medium",
-                    isAdminHomeSelected && "bg-accent",
-                  )}
-                >
-                  <Check className={cn("mr-2 h-4 w-4", !isAdminHomeSelected && "invisible")} />
-                  Admin Home
-                </DropdownMenuItem>
                 {adminProfiles.map((profileItem) => (
                   <DropdownMenuItem
                     key={`profile-${profileItem.id}`}
-                    onSelect={() => handleProfileNavigation(profileItem.name)}
+                    onSelect={() => handleProfileNavigation(profileItem)}
                     className="text-sm"
                   >
                     {profileItem.name}
                   </DropdownMenuItem>
                 ))}
-                {adminProfiles.length > 0 && adminHomepages.length > 0 && <DropdownMenuSeparator />}
-                {adminHomepages.map((homepage) => (
-                  <DropdownMenuItem
-                    key={homepage.id}
-                    onSelect={() => handleHomepageNavigation(homepage.id)}
-                    className={cn(
-                      "text-sm",
-                      selectedHomepageId === homepage.id && "bg-accent font-medium",
-                    )}
-                  >
-                    <Check className={cn("mr-2 h-4 w-4", selectedHomepageId !== homepage.id && "invisible")} />
-                    {homepage.name}
-                  </DropdownMenuItem>
-                ))}
-                {isAdmin && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger>Customize Home page</DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent>
-                        <DropdownMenuItem
-                          onSelect={() => {
-                            setAdminHomeOpen(false);
-                            router.push("/admin/customize-home");
-                          }}
-                        >
-                          Standard
-                        </DropdownMenuItem>
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  </>
-                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}

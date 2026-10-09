@@ -82,11 +82,6 @@ export function getNavigationByProfile(
   if ((isSuperAdmin || isAdmin) && hasEffectivePermission("DASHBOARD_READ")) {
     nav.push({ title: "Dashboards", href: "/dashboards", icon: LayoutDashboard });
   }
-  if (isAdmin && !isSuperAdmin) {
-    nav.push({ title: "Pre Sales", href: "/profiles/pre-sales", icon: Users });
-    nav.push({ title: "Sales", href: "/profiles/sales", icon: TrendingUp });
-    nav.push({ title: "SVC", href: "/profiles/svc", icon: Users });
-  }
   // Reports is always offered in the nav; actual report access is enforced
   // server-side by authorize('Report', 'read') on every reports endpoint.
   nav.push({ title: "Reports", href: "/reports", icon: BarChart3 });

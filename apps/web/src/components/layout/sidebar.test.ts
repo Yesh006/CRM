@@ -65,15 +65,15 @@ describe('role-based sidebar matrix', () => {
     ]);
   });
 
-  it('Admin keeps the original module list with Pre Sales, Sales, and SVC added', () => {
+  it('Admin does not show Pre Sales, Sales, or SVC in the sidebar', () => {
     const nav = getNavigationByProfile('Admin', [], withPerms(...allPerms), false, true);
     expect(nav.map((item) => item.title)).toEqual([
       'Home', 'Leads', 'Site Visits', 'Opportunities', 'Quotations', 'Bookings', 'Payments',
-      'Projects', 'Tasks', 'Pre Sales', 'Sales', 'SVC', 'Reports', 'Setup Home',
+      'Projects', 'Tasks', 'Reports', 'Setup Home',
     ]);
-    expect(nav.some((item) => item.title === 'Pre Sales' && item.href === '/profiles/pre-sales')).toBe(true);
-    expect(nav.some((item) => item.title === 'Sales' && item.href === '/profiles/sales')).toBe(true);
-    expect(nav.some((item) => item.title === 'SVC' && item.href === '/profiles/svc')).toBe(true);
+    expect(nav.some((item) => item.href === '/profiles/pre-sales')).toBe(false);
+    expect(nav.some((item) => item.href === '/profiles/sales')).toBe(false);
+    expect(nav.some((item) => item.href === '/profiles/svc')).toBe(false);
   });
 
   it('Non-admin profiles keep the required modules without showing Units and without affecting admin behavior', () => {
